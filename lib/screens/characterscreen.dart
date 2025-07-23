@@ -17,11 +17,13 @@ import 'package:dailyanimelist/widgets/shimmecolor.dart';
 import 'package:dailyanimelist/widgets/translator.dart';
 import 'package:dal_commons/dal_commons.dart';
 import 'package:flutter/material.dart';
+import 'package:dailyanimelist/data/top_character_ids.dart';
 
 import '../main.dart';
 
 enum VoiceSortType { mostRecent, favorites, title }
 
+final Map<int, int> _favoritesCache = {};
 class CharacterScreen extends StatefulWidget {
   final int id;
   final String charaCategory;
@@ -43,15 +45,13 @@ class _CharacterScreenState extends State<CharacterScreen> {
   StreamListener listener = StreamListener(0);
   VoiceSortType _voiceSort = VoiceSortType.mostRecent;
   bool _isSortingFavorites = false;
-  final Map<int, int> _favoritesCache = {};
-  List<VoicesFull> _sortedVoices = [];
+  List<VoicesFull> _originalVoices = [], _sortedVoices = [];
 
   @override
   void initState() {
     super.initState();
     id = widget.id;
     chara = widget.charaCategory;
-    _sortedVoices = [];
 
     if (chara.equals("character")) {
       getCharacterDetails();
@@ -67,7 +67,19 @@ class _CharacterScreenState extends State<CharacterScreen> {
         await DalApi.i.getCharaPeopleInfo(id, DataUnionType.people);
     if (_personInfo != null) {
       personInfo = _personInfo as PeopleV4Data;
-      _sortedVoices = List<VoicesFull>.from(personInfo?.voices ?? []);
+
+      // add voiced characters excluding duplicates
+      final seen = <int>{};
+      _originalVoices = [];
+      for (final v in personInfo?.voices ?? []) {
+        final id = v.character?.malId;
+        if (id != null && !seen.contains(id)) {
+          seen.add(id);
+          _originalVoices.add(v);
+        }
+      }
+      _sortedVoices = List.from(_originalVoices);
+
       characterPics.insert(0, personInfo!.images?.jpg?.imageUrl ?? '');
       applyChanges();
     } else {
@@ -371,7 +383,7 @@ class _CharacterScreenState extends State<CharacterScreen> {
                         onSelected: (sort) async {
                           if (sort == VoiceSortType.favorites) {
                             setState(() => _isSortingFavorites = true);
-                            await _fetchMissingFavorites(personInfo?.voices ?? []);
+                            await _fetchMissingFavorites();
                             setState(() => _isSortingFavorites = false);
                           }
                           setState(() {
@@ -425,36 +437,47 @@ class _CharacterScreenState extends State<CharacterScreen> {
     );
   }
 
-  Future<void> _fetchMissingFavorites(List<VoicesFull> voices) async {
-    final futures = voices.map((v) async {
-      final id = v.character?.malId;
+  Future<bool> _fetchFavorites(List<VoicesFull> voices) async {
+    for (var voice in voices) {
+      final id = voice.character?.malId;
       if (id != null && !_favoritesCache.containsKey(id)) {
         try {
           final data = await DalApi.i.getCharaPeopleInfo(id, DataUnionType.character);
           if (data is CharacterV4Data) {
             _favoritesCache[id] = data.favorites ?? 0;
+          } else {
+            showToast(S.current.Rate_limit_reached);
+            return false;
           }
         } catch (_) {}
       }
-    });
-    await Future.wait(futures);
+    }
+    return true;
+  }
+
+  Future<void> _fetchMissingFavorites() async {
+    // Build topVoices in the same order as topCharacterIds (descending by favorites)
+    final Map<int, VoicesFull> voiceMap = {
+      for (final voice in _originalVoices)
+        if (voice.character?.malId != null) voice.character!.malId!: voice
+    };
+    final topVoices = <VoicesFull>[];
+    for (final id in topCharacterIds) {
+      final voice = voiceMap[id];
+      if (voice != null) {
+        topVoices.add(voice);
+      }
+    }
+
+    if (await _fetchFavorites(topVoices) && await _fetchFavorites(_originalVoices)) {
+      showToast(S.current.Sorting_finished);
+    }
   }
 
   void _sortVoices() {
-    final original = personInfo?.voices;
-    if (original == null) return;
+    if (_originalVoices.isEmpty) return;
 
-    final seen = <int>{};
-    final voices = <VoicesFull>[];
-
-    // Remove duplicates
-    for (var v in original) {
-      final id = v.character?.malId;
-      if (id != null && !seen.contains(id)) {
-        seen.add(id);
-        voices.add(v);
-      }
-    }
+    List<VoicesFull> voices = List.from(_originalVoices);
 
     if (_voiceSort == VoiceSortType.title) {
       voices.sort((a, b) =>
@@ -517,6 +540,7 @@ class _CharacterCardLoaderState extends State<CharacterCardLoader> {
       final data = await DalApi.i.getCharaPeopleInfo(_node.id!, DataUnionType.character);
       if (data is CharacterV4Data && mounted) {
         final imageUrl = data.images?.webp?.imageUrl ?? data.images?.jpg?.imageUrl;
+        _favoritesCache[_node.id!] = data.favorites ?? 0;
         setState(() {
           _node = Node(
             id: _node.id,
