@@ -5,9 +5,11 @@ import 'package:dailyanimelist/api/auth/auth.dart';
 import 'package:dailyanimelist/api/dalapi.dart';
 import 'package:dailyanimelist/api/malapi.dart';
 import 'package:dailyanimelist/api/maluser.dart';
+import 'package:dailyanimelist/cache/dubinfomanager.dart';
 import 'package:dailyanimelist/enums.dart';
 import 'package:dailyanimelist/extensions.dart';
 import 'package:dailyanimelist/generated/l10n.dart';
+import 'package:dailyanimelist/icons/dub_icons.dart';
 import 'package:dailyanimelist/pages/animedetailed/intereststackwidget.dart';
 import 'package:dailyanimelist/pages/animedetailed/synopsiswidget.dart';
 import 'package:dailyanimelist/screens/characterscreen.dart';
@@ -772,6 +774,8 @@ class _ContentAllWidgetState extends State<ContentAllWidget>
                                               priorityBadge,
                                             if (user.pref.showAiringInfo)
                                               airingBadge,
+                                            if (user.pref.showDubStatus)
+                                              dubStatusBadge,
                                           ],
                                         ),
                                       ),
@@ -1160,6 +1164,29 @@ class _ContentAllWidgetState extends State<ContentAllWidget>
     );
   }
 
+  Widget get dubStatusBadge {
+    final content = widget.dynContent?.content;
+    if (content is! AnimeDetailed) return SB.z;
+
+    final id = content.id;
+    if (id == null) return SB.z;
+    if (DubInfoManager().hasAnyDub(id)) {
+      final icon = DubInfoManager().isDubbed(id)
+          ? DubIcons.dubs
+          : DubIcons.dubs_incomplete;
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 5.0),
+        child: Tooltip(
+          message: DubInfoManager().isDubbed(id)
+              ? "Fully dubbed"
+              : "Partially dubbed",
+          child: Icon(icon, size: 16),
+        ),
+      );
+    }
+    return SB.z;
+  }
+
   Widget indexWidget(index) => widget.showIndex
       ? Padding(
           padding: const EdgeInsets.only(right: 7),
@@ -1501,7 +1528,7 @@ Widget usingSyncScheduler(int id, Widget Function(ScheduleData) widget) {
 
 Widget statusBadge(NodeStatusValue nsv) => Container(
     width: 40,
-    padding: EdgeInsets.zero,
+    padding: EdgeInsets.symmetric(horizontal: 1.0),
     decoration: BoxDecoration(
         color: nsv.color, borderRadius: BorderRadius.circular(16)),
     child: Center(
